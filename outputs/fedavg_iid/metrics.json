@@ -1,0 +1,35 @@
+{
+  "experiment": "fedavg_pathmnist_iid",
+  "seed": 42,
+  "num_clients": 3,
+  "client_samples": [
+    29999,
+    29999,
+    29998
+  ],
+  "partition": "iid_random_equal_size",
+  "rounds": 5,
+  "local_epochs": 1,
+  "batch_size": 128,
+  "learning_rate": 0.001,
+  "num_threads": 4,
+  "device": "cpu",
+  "training_seconds": 84.84102390099724,
+  "peak_process_ram_mib": 684.234375,
+  "model_payload_bytes_per_client": 96676,
+  "cumulative_downlink_bytes": 1450140,
+  "cumulative_uplink_bytes": 1450140,
+  "cumulative_communication_bytes": 2900280,
+  "communication_note": "Raw model tensor payload estimate; excludes protocol, metadata, transport and security overhead.",
+  "final_test_metrics": {
+    "round": 5,
+    "mean_client_train_loss": 0.9728818879063286,
+    "accuracy": 0.7282729805013928,
+    "macro_f1": 0.6455080236502383,
+    "balanced_accuracy": 0.6489495130113232,
+    "round_seconds": 16.980488401000912,
+    "cumulative_downlink_bytes": 1450140,
+    "cumulative_uplink_bytes": 1450140,
+    "cumulative_communication_bytes": 2900280
+  }
+}
