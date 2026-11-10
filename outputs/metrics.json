@@ -1,0 +1,23 @@
+{
+  "experiment": "centralised_pathmnist_baseline",
+  "seed": 42,
+  "epochs": 5,
+  "batch_size": 128,
+  "learning_rate": 0.001,
+  "num_threads": 4,
+  "device": "cpu",
+  "torch_version": "2.15.0+cpu",
+  "train_samples": 89996,
+  "test_samples": 7180,
+  "num_classes": 9,
+  "training_seconds": 85.30874649799807,
+  "peak_process_ram_mib": 686.50390625,
+  "model_size_bytes": 100513,
+  "final_test_metrics": {
+    "epoch": 5,
+    "train_loss": 0.7728895341225018,
+    "accuracy": 0.7245125348189415,
+    "macro_f1": 0.6412151470313368,
+    "balanced_accuracy": 0.6475846626141774
+  }
+}
