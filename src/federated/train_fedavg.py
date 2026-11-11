@@ -28,6 +28,60 @@ def make_iid_partitions(dataset_size, num_clients, seed):
     return [part.astype(int).tolist() for part in partitions]
 
 
+def make_dirichlet_partitions(labels, num_clients, alpha, seed):
+    """Create non-IID class-skewed partitions using a Dirichlet distribution.
+
+    A smaller alpha produces stronger class imbalance. The minimum-size
+    condition avoids accidentally creating empty or tiny clients.
+    """
+    if alpha <= 0:
+        raise ValueError("Dirichlet alpha must be greater than zero")
+
+    labels = np.asarray(labels).reshape(-1)
+    rng = np.random.default_rng(seed)
+    num_classes = int(labels.max()) + 1
+    min_size = 0
+    min_required = max(1, int(0.1 * len(labels) / num_clients))
+    attempts = 0
+
+    while min_size < min_required:
+        attempts += 1
+        if attempts > 10000:
+            raise RuntimeError("Could not create balanced-enough Dirichlet partitions")
+
+        client_indices = [[] for _ in range(num_clients)]
+        for class_id in range(num_classes):
+            class_indices = np.where(labels == class_id)[0]
+            rng.shuffle(class_indices)
+
+            proportions = rng.dirichlet(np.repeat(alpha, num_clients))
+            # Avoid giving most of a class to clients that already have
+            # substantially more samples than average.
+            proportions = np.asarray([
+                p * (len(client_indices[c]) < len(labels) / num_clients)
+                for c, p in enumerate(proportions)
+            ])
+            proportions = proportions / proportions.sum()
+
+            split_points = (np.cumsum(proportions) * len(class_indices)).astype(int)[:-1]
+            class_splits = np.split(class_indices, split_points)
+            for client_id, split in enumerate(class_splits):
+                client_indices[client_id].extend(split.tolist())
+
+        min_size = min(len(indices) for indices in client_indices)
+
+    return [rng.permutation(indices).astype(int).tolist() for indices in client_indices]
+
+
+def client_class_counts(labels, partitions):
+    labels = np.asarray(labels).reshape(-1)
+    return [
+        {str(int(class_id)): int(np.sum(labels[indices] == class_id))
+         for class_id in np.unique(labels)}
+        for indices in partitions
+    ]
+
+
 def train_local_model(global_state, train_dataset, indices, args, device):
     """Train one client from the current global model and return its state."""
     local_model = SmallCNN(num_classes=9).to(device)
@@ -85,7 +139,7 @@ def state_dict_nbytes(state):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Three-client IID FedAvg on PathMNIST")
+    parser = argparse.ArgumentParser(description="FedAvg on PathMNIST with IID or Dirichlet non-IID clients")
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument("--num-clients", type=int, default=3)
     parser.add_argument("--local-epochs", type=int, default=1)
@@ -93,7 +147,9 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--num-threads", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output-dir", type=str, default="outputs/fedavg_iid")
+    parser.add_argument("--partition", choices=["iid", "dirichlet"], default="iid")
+    parser.add_argument("--dirichlet-alpha", type=float, default=0.5)
+    parser.add_argument("--output-dir", type=str, default=None)
     args = parser.parse_args()
 
     if min(args.rounds, args.num_clients, args.local_epochs,
@@ -114,13 +170,25 @@ def main():
         num_workers=0, pin_memory=False
     )
 
-    partitions = make_iid_partitions(len(train_ds), args.num_clients, args.seed)
+    train_labels = np.asarray(train_ds.labels).reshape(-1)
+    if args.partition == "iid":
+        partitions = make_iid_partitions(len(train_ds), args.num_clients, args.seed)
+        partition_description = "iid_random_equal_size"
+    else:
+        partitions = make_dirichlet_partitions(
+            train_labels, args.num_clients, args.dirichlet_alpha, args.seed
+        )
+        partition_description = f"dirichlet_alpha_{args.dirichlet_alpha}"
+
     client_sizes = [len(p) for p in partitions]
+    class_counts = client_class_counts(train_labels, partitions)
     print(
         f"Train={len(train_ds)} | Test={len(test_ds)} | "
         f"Clients={args.num_clients} | Client samples={client_sizes}",
         flush=True,
     )
+    for client_id, counts in enumerate(class_counts, start=1):
+        print(f"Client {client_id} class counts: {counts}", flush=True)
 
     global_model = SmallCNN(num_classes=9).to(device)
     global_state = copy.deepcopy(global_model.state_dict())
@@ -173,7 +241,11 @@ def main():
         )
 
     total_seconds = time.perf_counter() - start_time
-    output_dir = Path(args.output_dir)
+    default_name = (
+        "fedavg_iid" if args.partition == "iid"
+        else f"fedavg_dirichlet_a{args.dirichlet_alpha:g}"
+    )
+    output_dir = Path(args.output_dir) if args.output_dir else Path("outputs") / default_name
     output_dir.mkdir(parents=True, exist_ok=True)
     model_path = output_dir / "fedavg_global_model.pt"
     torch.save(global_state, model_path)
@@ -183,11 +255,13 @@ def main():
     peak_ram_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
     result = {
-        "experiment": "fedavg_pathmnist_iid",
+        "experiment": f"fedavg_pathmnist_{args.partition}",
         "seed": args.seed,
         "num_clients": args.num_clients,
         "client_samples": client_sizes,
-        "partition": "iid_random_equal_size",
+        "client_class_counts": class_counts,
+        "partition": partition_description,
+        "dirichlet_alpha": args.dirichlet_alpha if args.partition == "dirichlet" else None,
         "rounds": args.rounds,
         "local_epochs": args.local_epochs,
         "batch_size": args.batch_size,

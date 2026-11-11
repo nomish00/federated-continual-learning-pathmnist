@@ -1,0 +1,71 @@
+{
+  "experiment": "fedavg_pathmnist_dirichlet",
+  "seed": 42,
+  "num_clients": 3,
+  "client_samples": [
+    31701,
+    26839,
+    31456
+  ],
+  "client_class_counts": [
+    {
+      "0": 1653,
+      "1": 400,
+      "2": 9066,
+      "3": 2719,
+      "4": 6457,
+      "5": 7884,
+      "6": 3522,
+      "7": 0,
+      "8": 0
+    },
+    {
+      "0": 5371,
+      "1": 1473,
+      "2": 1235,
+      "3": 5156,
+      "4": 1395,
+      "5": 1243,
+      "6": 3656,
+      "7": 4693,
+      "8": 2617
+    },
+    {
+      "0": 2342,
+      "1": 7636,
+      "2": 59,
+      "3": 2526,
+      "4": 154,
+      "5": 3055,
+      "6": 708,
+      "7": 4708,
+      "8": 10268
+    }
+  ],
+  "partition": "dirichlet_alpha_0.5",
+  "dirichlet_alpha": 0.5,
+  "rounds": 5,
+  "local_epochs": 1,
+  "batch_size": 128,
+  "learning_rate": 0.001,
+  "num_threads": 4,
+  "device": "cpu",
+  "training_seconds": 84.90086785900348,
+  "peak_process_ram_mib": 689.515625,
+  "model_payload_bytes_per_client": 96676,
+  "cumulative_downlink_bytes": 1450140,
+  "cumulative_uplink_bytes": 1450140,
+  "cumulative_communication_bytes": 2900280,
+  "communication_note": "Raw model tensor payload estimate; excludes protocol, metadata, transport and security overhead.",
+  "final_test_metrics": {
+    "round": 5,
+    "mean_client_train_loss": 0.7602088661891968,
+    "accuracy": 0.5979108635097493,
+    "macro_f1": 0.483979515601026,
+    "balanced_accuracy": 0.5547631925665676,
+    "round_seconds": 17.038829480996355,
+    "cumulative_downlink_bytes": 1450140,
+    "cumulative_uplink_bytes": 1450140,
+    "cumulative_communication_bytes": 2900280
+  }
+}
