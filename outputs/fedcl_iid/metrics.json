@@ -1,0 +1,56 @@
+{
+  "experiment": "FedCL IID baseline",
+  "dataset": "PathMNIST",
+  "num_clients": 3,
+  "tasks": [
+    [
+      0,
+      1,
+      2
+    ],
+    [
+      3,
+      4,
+      5
+    ],
+    [
+      6,
+      7,
+      8
+    ]
+  ],
+  "rounds_per_task": 5,
+  "local_epochs": 1,
+  "batch_size": 128,
+  "learning_rate": 0.001,
+  "seed": 42,
+  "device": "cpu",
+  "final_combined_accuracy": 0.21880222841225627,
+  "final_combined_macro_f1": 0.11496726404443598,
+  "final_combined_balanced_accuracy": 0.19352044770702637,
+  "final_mean_forgetting": 0.605776174845616,
+  "final_task_accuracies_and_forgetting": {
+    "task_1_accuracy": {
+      "best_accuracy_since_introduction": 0.992472266244057,
+      "final_accuracy": 0.0,
+      "forgetting": 0.992472266244057
+    },
+    "task_2_accuracy": {
+      "best_accuracy_since_introduction": 0.8248562582927909,
+      "final_accuracy": 0.0,
+      "forgetting": 0.8248562582927909
+    },
+    "task_3_accuracy": {
+      "best_accuracy_since_introduction": 0.6559498956158664,
+      "final_accuracy": 0.6559498956158664,
+      "forgetting": 0.0
+    }
+  },
+  "training_seconds": 97.18074059486389,
+  "peak_ram_mib": 692.87890625,
+  "model_payload_bytes_per_client": 96676,
+  "cumulative_downlink_bytes": 4350420,
+  "cumulative_uplink_bytes": 4350420,
+  "cumulative_total_communication_bytes": 8700840,
+  "communication_note": "Raw model tensor payload estimate. Excludes protocol headers, metadata, compression, encryption and transport overhead."
+}

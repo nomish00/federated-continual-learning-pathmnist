@@ -1,0 +1,68 @@
+{
+    "experiment": "FedCL with local experience replay",
+    "dataset": "PathMNIST",
+    "num_clients": 3,
+    "tasks": [
+        [
+            0,
+            1,
+            2
+        ],
+        [
+            3,
+            4,
+            5
+        ],
+        [
+            6,
+            7,
+            8
+        ]
+    ],
+    "rounds_per_task": 5,
+    "local_epochs": 1,
+    "batch_size": 128,
+    "learning_rate": 0.001,
+    "memory_per_class_per_client": 50,
+    "replay_fraction": 0.25,
+    "seed": 42,
+    "device": "cpu",
+    "final_combined_accuracy": 0.5707520891364902,
+    "final_combined_macro_f1": 0.4530177307384873,
+    "final_combined_balanced_accuracy": 0.4903016824445428,
+    "final_mean_forgetting_old_tasks": 0.3892643010995373,
+    "final_mean_forgetting_all_tasks": 0.2595095340663582,
+    "final_task_accuracies_and_forgetting": {
+        "task_1_accuracy": {
+            "best_accuracy_since_introduction": 0.9928684627575277,
+            "final_accuracy": 0.7809033280507132,
+            "forgetting": 0.21196513470681455
+        },
+        "task_2_accuracy": {
+            "best_accuracy_since_introduction": 0.7412649270234409,
+            "final_accuracy": 0.17470145953118088,
+            "forgetting": 0.56656346749226
+        },
+        "task_3_accuracy": {
+            "best_accuracy_since_introduction": 0.7231732776617954,
+            "final_accuracy": 0.7231732776617954,
+            "forgetting": 0.0
+        }
+    },
+    "training_seconds": 106.26220035552979,
+    "peak_ram_mib": 690.140625,
+    "model_payload_bytes_per_client": 96676,
+    "cumulative_downlink_bytes": 4350420,
+    "cumulative_uplink_bytes": 4350420,
+    "cumulative_total_communication_bytes": 8700840,
+    "client_replay_memory_examples": [
+        450,
+        450,
+        450
+    ],
+    "total_replay_memory_examples": 1350,
+    "estimated_replay_image_storage_bytes": 3175200,
+    "replay_index_storage_bytes": 10800,
+    "communication_note": "Raw model tensor payload estimate. Excludes protocol headers, metadata, compression, encryption and transport overhead.",
+    "replay_memory_note": "Estimated uint8 image storage assumes 28x28 RGB images. Replay examples are represented by dataset indices in this implementation; index storage is reported separately. This is not total process RAM."
+}

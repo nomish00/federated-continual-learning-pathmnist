@@ -1,37 +1,71 @@
 {
   "experiment": "fedavg_pathmnist_iid",
   "seed": 42,
-  "num_clients": 5,
+  "num_clients": 3,
   "client_samples": [
-    18000,
-    17999,
-    17999,
-    17999,
-    17999
+    29999,
+    29999,
+    29998
+  ],
+  "client_class_counts": [
+    {
+      "0": 3139,
+      "1": 3169,
+      "2": 3501,
+      "3": 3439,
+      "4": 2683,
+      "5": 4066,
+      "6": 2581,
+      "7": 3082,
+      "8": 4339
+    },
+    {
+      "0": 3169,
+      "1": 3135,
+      "2": 3450,
+      "3": 3419,
+      "4": 2647,
+      "5": 4080,
+      "6": 2660,
+      "7": 3203,
+      "8": 4236
+    },
+    {
+      "0": 3058,
+      "1": 3205,
+      "2": 3409,
+      "3": 3543,
+      "4": 2676,
+      "5": 4036,
+      "6": 2645,
+      "7": 3116,
+      "8": 4310
+    }
   ],
   "partition": "iid_random_equal_size",
+  "dirichlet_alpha": null,
   "rounds": 5,
   "local_epochs": 1,
   "batch_size": 128,
   "learning_rate": 0.001,
   "num_threads": 4,
   "device": "cpu",
-  "training_seconds": 85.69687149200035,
-  "peak_process_ram_mib": 685.19140625,
+  "training_seconds": 80.23566410498461,
+  "peak_process_ram_mib": 689.5859375,
   "model_payload_bytes_per_client": 96676,
-  "cumulative_downlink_bytes": 2416900,
-  "cumulative_uplink_bytes": 2416900,
-  "cumulative_communication_bytes": 4833800,
+  "cumulative_downlink_bytes": 1450140,
+  "cumulative_uplink_bytes": 1450140,
+  "cumulative_communication_bytes": 2900280,
   "communication_note": "Raw model tensor payload estimate; excludes protocol, metadata, transport and security overhead.",
   "final_test_metrics": {
     "round": 5,
-    "mean_client_train_loss": 1.0927569147992005,
-    "accuracy": 0.6796657381615598,
-    "macro_f1": 0.594413814486548,
-    "balanced_accuracy": 0.5992785536993442,
-    "round_seconds": 17.201077716003056,
-    "cumulative_downlink_bytes": 2416900,
-    "cumulative_uplink_bytes": 2416900,
-    "cumulative_communication_bytes": 4833800
+    "mean_client_train_loss": 0.9728818879063286,
+    "accuracy": 0.7282729805013928,
+    "macro_f1": 0.6455080236502383,
+    "balanced_accuracy": 0.6489495130113232,
+    "round_seconds": 16.066788660973543,
+    "cumulative_downlink_bytes": 1450140,
+    "cumulative_uplink_bytes": 1450140,
+    "cumulative_communication_bytes": 2900280
   }
 }
