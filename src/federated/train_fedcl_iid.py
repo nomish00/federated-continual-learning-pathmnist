@@ -43,6 +43,8 @@ TASKS = [
     [3, 4, 5],
     [6, 7, 8],
 ]
+# Each stage introduces one class group; clients only train on that stage's
+# training examples, while evaluation revisits every group learned so far.
 
 
 def set_seed(seed):
@@ -226,7 +228,8 @@ def evaluate(
 
         logits = model(images)
 
-        # Keep only classes that have been introduced so far.
+        # Mask future-class logits so evaluation measures confusion only
+        # among classes the model has already been taught.
         masked_logits = torch.full_like(logits, -1e9)
         masked_logits[:, allowed_classes] = (
             logits[:, allowed_classes]
@@ -291,6 +294,8 @@ def calculate_forgetting(history, current_stage, current_accuracies):
 
     old_task_forgetting = []
 
+    # The current stage is excluded: forgetting is defined only for tasks
+    # learned before the current one.
     for task_index in range(current_stage):
         task_key = f"task_{task_index + 1}_accuracy"
         current_accuracy = current_accuracies.get(task_key)
@@ -444,6 +449,8 @@ def main():
     rng = np.random.default_rng(args.seed)
     experiment_start = time.time()
 
+    # The global checkpoint carries forward across stages, making later
+    # stages sequential fine-tuning rather than independent experiments.
     for stage, current_task_classes in enumerate(TASKS, start=1):
         seen_classes = [
             class_id
@@ -464,6 +471,7 @@ def main():
             np.isin(train_labels, current_task_classes)
         )[0]
 
+        # Repartition the current stage's examples among simulated clients.
         client_partitions = make_iid_client_partitions(
             task_train_indices,
             args.num_clients,
@@ -512,6 +520,8 @@ def main():
                 client_losses.append(client_loss)
 
             # Server aggregates client model parameters.
+            # All local models were initialized from global_state; aggregate
+            # them by client sample count to form the next global checkpoint.
             global_state = fedavg(
                 client_states,
                 client_sizes,
@@ -532,6 +542,8 @@ def main():
             model.load_state_dict(global_state)
             model.eval()
 
+            # Per-task scores expose old-task degradation that a single
+            # combined score could hide.
             # Evaluate every task introduced so far.
             task_accuracies = {}
             task_results = {}
@@ -644,6 +656,8 @@ def main():
             )
             print(f"    Task accuracies: {task_summary}")
 
+            # Save incrementally so completed rounds survive an interrupted
+            # experiment.
             # Save progress after every round.
             pd.DataFrame(history).to_csv(
                 output_dir / "history.csv",
@@ -652,8 +666,8 @@ def main():
 
     total_seconds = time.time() - experiment_start
 
-    # Final forgetting: best accuracy for each task minus its
-    # accuracy at the end of the final stage.
+    # Final forgetting compares each task's best observed score after
+    # introduction with its score after all stages have completed.
     final_row = history[-1]
     final_task_accuracies = {}
 

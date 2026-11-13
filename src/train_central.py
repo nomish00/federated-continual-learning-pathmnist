@@ -20,6 +20,8 @@ class SmallCNN(nn.Module):
 
     def __init__(self, num_classes: int = 9):
         super().__init__()
+        # Pooling reduces spatial dimensions after each convolution; adaptive
+        # pooling makes the classifier independent of the final image size.
         self.features = nn.Sequential(
             nn.Conv2d(3, 16, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
@@ -47,6 +49,7 @@ def set_seed(seed: int):
 def evaluate(model, loader, device):
     model.eval()
     y_true, y_pred = [], []
+    # Evaluation does not need gradients, which reduces memory use and work.
     with torch.no_grad():
         for images, labels in loader:
             images = images.to(device)
@@ -104,6 +107,8 @@ def main():
     history = []
     start = time.perf_counter()
 
+    # Train centrally on the full training split and evaluate on the official
+    # test split after each epoch.
     for epoch in range(1, args.epochs + 1):
         model.train()
         running_loss = 0.0
@@ -123,6 +128,8 @@ def main():
             running_loss += loss.item() * batch_n
             examples_seen += batch_n
 
+        # Accumulate loss per example so a smaller final batch is weighted
+        # correctly in the epoch average.
         train_loss = running_loss / max(examples_seen, 1)
         test_metrics = evaluate(model, test_loader, device)
         row = {"epoch": epoch, "train_loss": train_loss, **test_metrics}
@@ -142,6 +149,8 @@ def main():
 
     model_path = output_dir / "central_model.pt"
     torch.save(model.state_dict(), model_path)
+    # Keep one row per epoch so learning curves can be compared with federated
+    # runs, whose history is recorded per communication round.
     pd.DataFrame(history).to_csv(output_dir / "history.csv", index=False)
 
     # Linux reports ru_maxrss in KiB. Convert to MiB.

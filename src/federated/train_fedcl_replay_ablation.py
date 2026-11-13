@@ -100,9 +100,13 @@ def make_client_partitions(
     client_indices: List[List[int]] = [[] for _ in range(num_clients)]
 
     if alpha <= 0:
+        # Shuffle all examples before splitting so each client gets a random,
+        # approximately equal-sized share of the training set.
         indices = rng.permutation(len(labels))
         return [np.asarray(x, dtype=np.int64) for x in np.array_split(indices, num_clients)]
 
+    # Split each class independently. Small alpha values make its samples
+    # concentrate on fewer clients, creating stronger class imbalance.
     for class_id in np.unique(labels):
         class_indices = np.where(labels == class_id)[0]
         rng.shuffle(class_indices)
@@ -134,7 +138,7 @@ def peak_rss_mib() -> float:
     try:
         import resource
         value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        # Linux: KiB; macOS: bytes.
+        # Linux reports KiB while macOS reports bytes; normalize both to MiB.
         if os.name == "posix" and value > 10_000_000:
             return value / (1024 ** 2)
         return value / 1024
@@ -156,7 +160,8 @@ def evaluate(
             images = images.to(device)
             labels = labels.reshape(-1).long().cpu().numpy()
             logits = model(images)
-            # Exclude future/unseen classes from predictions.
+            # Compare only classes learned so far so untrained future logits
+            # cannot count as classification errors.
             logits[:, [c for c in range(9) if c not in seen]] = -1e9
             predictions = logits.argmax(dim=1).cpu().numpy()
             mask = np.isin(labels, seen)
@@ -181,6 +186,7 @@ def evaluate_each_task(
     results: Dict[str, float] = {}
     model.eval()
     with torch.no_grad():
+        # Run inference once, then reuse the logits to score each task.
         cached = []
         for images, labels in test_loader:
             logits = model(images.to(device)).cpu().numpy()
@@ -232,6 +238,8 @@ def local_train(
     if replay_indices and replay_fraction > 0:
         replay_loader = DataLoader(
             Subset(train_dataset, list(replay_indices)),
+            # Replay is an additional mini-batch, sized relative to the
+            # current-data batch, and concatenated with it below.
             batch_size=max(1, int(round(batch_size * replay_fraction))),
             shuffle=True,
             num_workers=0,
@@ -248,6 +256,8 @@ def local_train(
                 try:
                     replay_x, replay_y = next(replay_iter)
                 except StopIteration:
+                    # Keep replay available for every current batch, even when
+                    # the replay loader has fewer batches in an epoch.
                     replay_iter = iter(replay_loader)
                     replay_x, replay_y = next(replay_iter)
                 replay_x = replay_x.to(device)
@@ -277,6 +287,8 @@ def update_replay_buffers(
     rng = np.random.default_rng(seed)
     for client_id, partition in enumerate(client_partitions):
         for class_id in current_task_classes:
+            # Existing exemplars are retained; only the remaining per-class
+            # budget can be filled from this client's current-task examples.
             candidates = partition[labels[partition] == class_id]
             existing = buffers[client_id].get(class_id, [])
             remaining = max(0, memory_per_class - len(existing))
@@ -291,6 +303,8 @@ def update_replay_buffers(
 
 
 def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, device, out_dir):
+    # Reinitialize everything per budget so each ablation is an independent
+    # run with the same initial partition and global-model seed.
     set_seed(args.seed)
     client_parts = make_client_partitions(labels, args.num_clients, args.seed, args.dirichlet_alpha)
     buffers: List[Dict[int, List[int]]] = [dict() for _ in range(args.num_clients)]
@@ -308,6 +322,8 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
             total_rounds += 1
             local_models, client_weights = [], []
             for client_id, partition in enumerate(client_parts):
+                # Clients train on their share of the current task; their
+                # stored examples from previous tasks are supplied separately.
                 current_indices = partition[np.isin(labels[partition], task_classes)]
                 replay_indices = [
                     idx
@@ -332,6 +348,8 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
 
             total_weight = float(sum(client_weights))
             new_state = {}
+            # FedAvg combines complete client state dicts, weighted by each
+            # client's current-task and replay example counts.
             for key in global_model.state_dict():
                 new_state[key] = sum(
                     local_models[c].state_dict()[key] * (client_weights[c] / total_weight)
@@ -352,6 +370,8 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
                 best_task_accuracy[i + 1] - task_metrics[f"task{i + 1}_accuracy"]
                 for i in range(task_idx)
             ]
+            # The current task has not had a chance to be forgotten yet, so
+            # only previously completed tasks contribute to old-task forgetting.
             all_forgetting_values = old_forgetting_values + [0.0]
             row = {
                 "memory_per_class_per_client": memory_per_class,
@@ -380,6 +400,8 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
             )
 
         # After completing a stage, store examples from the task just learned.
+        # Updating only at the stage boundary keeps replay contents fixed
+        # throughout all rounds of that task.
         update_replay_buffers(
             labels, client_parts, task_classes, buffers,
             memory_per_class, args.seed + memory_per_class * 100 + task_idx,
@@ -437,6 +459,8 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
         "buffer_index_storage_bytes_estimate": sum(
             sum(len(v) for v in client_buffer.values()) for client_buffer in buffers
         ) * 8,
+        # This is the equivalent uint8 image footprint; the buffer itself
+        # stores indices, not image tensors.
         "buffer_image_storage_bytes_equivalent_uint8": sum(
             sum(len(v) for v in client_buffer.values()) for client_buffer in buffers
         ) * 28 * 28 * 3,
@@ -445,12 +469,12 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
     budget_dir = out_dir / f"memory_{memory_per_class}"
     budget_dir.mkdir(parents=True, exist_ok=True)
 
-    # Include columns introduced in later continual-learning tasks.
+    # Later history rows gain per-task metrics as more tasks are learned;
+    # collect the union of columns so all rows fit in one CSV schema.
     history_fieldnames = list(dict.fromkeys(
         key for row in history_rows for key in row.keys()
     ))
 
-    # Include columns introduced in later continual-learning tasks.
     with (budget_dir / "history.csv").open("w", newline="") as f:
         writer = csv.DictWriter(
             f,
@@ -514,6 +538,7 @@ def main():
     summaries = []
     for budget in args.memory_per_class:
         print(f"\n=== Starting replay budget: {budget} examples/class/client ===")
+        # Each call creates fresh partitions, buffers, and model state.
         summary = run_one_budget(args, budget, train_ds, test_loader, labels, device, output_dir)
         summaries.append(summary)
 

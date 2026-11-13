@@ -44,6 +44,8 @@ def make_dirichlet_partitions(labels, num_clients, alpha, seed):
     min_required = max(1, int(0.1 * len(labels) / num_clients))
     attempts = 0
 
+    # Retry the whole partition when a client gets too few examples. This
+    # avoids degenerate client datasets while keeping class proportions random.
     while min_size < min_required:
         attempts += 1
         if attempts > 10000:
@@ -75,6 +77,7 @@ def make_dirichlet_partitions(labels, num_clients, alpha, seed):
 
 def client_class_counts(labels, partitions):
     labels = np.asarray(labels).reshape(-1)
+    # Store class IDs as strings so the counts serialize cleanly as JSON keys.
     return [
         {str(int(class_id)): int(np.sum(labels[indices] == class_id))
          for class_id in np.unique(labels)}
@@ -85,6 +88,7 @@ def client_class_counts(labels, partitions):
 def train_local_model(global_state, train_dataset, indices, args, device):
     """Train one client from the current global model and return its state."""
     local_model = SmallCNN(num_classes=9).to(device)
+    # All clients in a round start from the same server checkpoint.
     local_model.load_state_dict(global_state)
     loader = DataLoader(
         Subset(train_dataset, indices),
@@ -121,6 +125,8 @@ def train_local_model(global_state, train_dataset, indices, args, device):
 
 def fedavg(client_states, client_sizes):
     """Sample-weighted average of client model parameters."""
+    # Weight each client by its number of training examples rather than
+    # averaging clients equally.
     total_size = float(sum(client_sizes))
     averaged_state = {}
 
@@ -192,6 +198,7 @@ def main():
 
     global_model = SmallCNN(num_classes=9).to(device)
     global_state = copy.deepcopy(global_model.state_dict())
+    # Count tensor payload only; real network overhead is not simulated.
     model_payload_bytes = state_dict_nbytes(global_state)
 
     history = []
@@ -215,6 +222,7 @@ def main():
         total_down_bytes += model_payload_bytes * args.num_clients
         total_up_bytes += model_payload_bytes * args.num_clients
 
+        # Aggregate all client updates before the next round starts.
         global_state = fedavg(client_states, client_sizes)
         global_model.load_state_dict(global_state)
         metrics = evaluate(global_model, test_loader, device)
@@ -254,6 +262,8 @@ def main():
     import resource
     peak_ram_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
+    # Persist the settings alongside results so runs can be interpreted and
+    # compared without relying on the command history.
     result = {
         "experiment": f"fedavg_pathmnist_{args.partition}",
         "seed": args.seed,

@@ -13,8 +13,8 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
 from medmnist import PathMNIST
 
-# Allow running this file directly from the project root:
-# python src/federated/train_fedavg.py
+# Allow running this legacy IID-only copy directly from the project root:
+# python src/federated/train_fedavg_iid_backup.py
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from train_central import SmallCNN, set_seed, evaluate  # noqa: E402
@@ -23,6 +23,8 @@ from train_central import SmallCNN, set_seed, evaluate  # noqa: E402
 def make_iid_partitions(dataset_size, num_clients, seed):
     """Create disjoint, approximately equal IID partitions of the training set."""
     rng = np.random.default_rng(seed)
+    # Shuffle before splitting so partition membership is independent of
+    # the dataset's original class ordering.
     indices = rng.permutation(dataset_size)
     partitions = np.array_split(indices, num_clients)
     return [part.astype(int).tolist() for part in partitions]
@@ -31,6 +33,7 @@ def make_iid_partitions(dataset_size, num_clients, seed):
 def train_local_model(global_state, train_dataset, indices, args, device):
     """Train one client from the current global model and return its state."""
     local_model = SmallCNN(num_classes=9).to(device)
+    # Reset each client to the current global weights at the start of a round.
     local_model.load_state_dict(global_state)
     loader = DataLoader(
         Subset(train_dataset, indices),
@@ -70,6 +73,8 @@ def fedavg(client_states, client_sizes):
     total_size = float(sum(client_sizes))
     averaged_state = {}
 
+    # Larger client datasets contribute proportionally more to the global
+    # model update.
     for key in client_states[0]:
         # This starter model has only floating-point parameters/buffers.
         averaged_state[key] = torch.zeros_like(client_states[0][key])
@@ -124,6 +129,7 @@ def main():
 
     global_model = SmallCNN(num_classes=9).to(device)
     global_state = copy.deepcopy(global_model.state_dict())
+    # This is a raw tensor-size estimate, not actual network traffic.
     model_payload_bytes = state_dict_nbytes(global_state)
 
     history = []
@@ -147,6 +153,8 @@ def main():
         total_down_bytes += model_payload_bytes * args.num_clients
         total_up_bytes += model_payload_bytes * args.num_clients
 
+        # The aggregated checkpoint is broadcast implicitly by being passed
+        # to each client's local training on the next round.
         global_state = fedavg(client_states, client_sizes)
         global_model.load_state_dict(global_state)
         metrics = evaluate(global_model, test_loader, device)

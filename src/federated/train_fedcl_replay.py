@@ -164,6 +164,8 @@ def update_replay_buffer(
 
     for class_id in task_classes:
 
+        # This helper is called once after a stage, so the selected items
+        # become fixed replay exemplars for later stages.
         class_indices = [
             idx
             for idx in current_indices
@@ -243,6 +245,8 @@ def train_local_model(
 
     if replay_indices:
 
+        # Replay occupies a fraction of each combined batch; current examples
+        # use the remaining slots. With no memory, use a full current-data batch.
         replay_batch_size = max(
             1,
             int(round(batch_size * replay_fraction)),
@@ -300,6 +304,8 @@ def train_local_model(
 
                 except StopIteration:
 
+                    # Cycle through the replay set if it has fewer batches
+                    # than the current-task loader.
                     replay_iterator = iter(replay_loader)
 
                     replay_images, replay_labels = next(
@@ -378,6 +384,8 @@ def fedavg_aggregate(client_states, client_weights):
             client_states[0][key]
         ):
 
+            # Average learnable floating-point values by each client's
+            # effective local dataset size.
             aggregated = torch.zeros_like(
                 client_states[0][key]
             )
@@ -788,6 +796,8 @@ def main():
     # Sequential task learning
     # -----------------------------------------------------
 
+    # Keep one global model across stages; only the data available to clients
+    # changes as each new class group is introduced.
     for task_index, task_classes in enumerate(TASKS):
 
         stage = task_index + 1
@@ -863,15 +873,16 @@ def main():
 
                 client_states.append(local_state)
 
-                # Weight by current examples plus replay
-                # examples used for local training.
+                # Weight by current examples plus replay examples so clients
+                # with more local training data contribute proportionally.
                 client_weights.append(
                     len(current_indices) + len(replay_indices)
                 )
 
                 client_losses.append(local_loss)
 
-            # Server aggregates client models.
+            # Server aggregates local models into the checkpoint for the next
+            # communication round (and, later, the next task).
             global_state = fedavg_aggregate(
                 client_states,
                 client_weights,
@@ -1006,6 +1017,8 @@ def main():
                 f"old_forgetting={forgetting_text}"
             )
 
+        # Add exemplars only after all rounds for this task; the replay set
+        # therefore remains unchanged within the stage.
         # -------------------------------------------------
         # Update each client's local replay memory
         # -------------------------------------------------
@@ -1119,6 +1132,8 @@ def main():
     # Communication accounting
     # -----------------------------------------------------
 
+    # The communication estimate assumes a full model download and upload for
+    # every client in every round; it excludes protocol/transport overhead.
     total_rounds = (
         len(TASKS) * args.rounds_per_task
     )
@@ -1153,6 +1168,8 @@ def main():
     )
 
     # PathMNIST source images are 28x28 RGB uint8.
+    # Compare index-based storage with the equivalent uncompressed image
+    # footprint; this does not represent actual process memory use.
     estimated_replay_image_bytes = (
         total_memory_examples * 28 * 28 * 3
     )
