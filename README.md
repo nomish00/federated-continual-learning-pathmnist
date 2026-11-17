@@ -127,9 +127,18 @@ python src/federated/train_fedcl_replay_ablation.py \
 ```
 
 Use `--memory-per-class` to select budgets, `--dirichlet-alpha` to configure
-client class partitions (`<= 0` selects IID), `--replay-fraction` to set the
-replay share of a training batch, and `--output-dir` or `--data-dir` to change
-the default paths. Results default to `runs/fedcl_replay_ablation/`.
+client class partitions (`<= 0` selects IID), and `--output-dir` or
+`--data-dir` to change the default paths. Results default to
+`runs/fedcl_replay_ablation/`.
+
+In the ablation script, `--replay-fraction` sets replay examples relative to
+the current-data batch, and replay is added on top of that batch. For example,
+with `--batch-size 128 --replay-fraction 0.25`, a full batch has 128 current
+examples plus about 32 replay examples. This differs from
+`train_fedcl_replay.py`, where the fraction is a share of the combined batch
+(about 96 current plus 32 replay examples for those settings). Thus the two
+scripts do not use equivalent batch composition, and their results are not
+directly comparable without accounting for this difference.
 
 ## Results
 

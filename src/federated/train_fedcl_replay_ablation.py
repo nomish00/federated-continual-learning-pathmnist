@@ -127,6 +127,72 @@ def state_dict_bytes(model: nn.Module) -> int:
     return sum(t.numel() * t.element_size() for t in model.state_dict().values())
 
 
+def get_trainable_names(model: nn.Module, update_mode: str) -> List[str]:
+    """Return parameter names selected for local training."""
+    if update_mode == "full":
+        return [
+            name for name, _ in model.named_parameters()
+        ]
+
+    if update_mode == "head":
+        prefixes = ("classifier.",)
+
+    elif update_mode == "block_head":
+        prefixes = ("features.6.", "classifier.")
+
+    else:
+        raise ValueError(f"Unknown update mode: {update_mode}")
+
+    return [
+        name for name, _ in model.named_parameters()
+        if name.startswith(prefixes)
+    ]
+
+
+def get_update_state_keys(
+    model: nn.Module,
+    update_mode: str
+) -> List[str]:
+    """Return state-dict keys that must be aggregated and communicated."""
+    return get_trainable_names(model, update_mode)
+
+
+def configure_trainable_parameters(
+    model: nn.Module,
+    update_mode: str
+) -> List[str]:
+    """Freeze unselected parameters and return the trainable names."""
+    trainable_names = get_trainable_names(model, update_mode)
+
+    for name, parameter in model.named_parameters():
+        parameter.requires_grad = name in trainable_names
+
+    return trainable_names
+
+
+def selected_state_bytes(
+    model: nn.Module,
+    selected_keys: Sequence[str]
+) -> int:
+    state = model.state_dict()
+    return sum(
+        state[key].numel() * state[key].element_size()
+        for key in selected_keys
+    )
+
+
+def selected_parameter_count(
+    model: nn.Module,
+    selected_names: Sequence[str]
+) -> int:
+    parameters = dict(model.named_parameters())
+    return sum(
+        parameters[name].numel()
+        for name in selected_names
+    )
+
+
+
 def current_rss_mib() -> float:
     if psutil is None:
         return float("nan")
@@ -182,29 +248,47 @@ def evaluate_each_task(
     completed_task: int,
     device: torch.device,
 ) -> Dict[str, float]:
-    """Evaluate each completed task separately, masking to that task's labels."""
+    """Evaluate each task while allowing predictions over all seen classes."""
     results: Dict[str, float] = {}
     model.eval()
+
+    cached = []
     with torch.no_grad():
-        # Run inference once, then reuse the logits to score each task.
-        cached = []
         for images, labels in test_loader:
             logits = model(images.to(device)).cpu().numpy()
             labels = labels.reshape(-1).numpy().astype(int)
             cached.append((logits, labels))
 
+    # All classes learned up to the current stage are valid predictions.
+    seen_classes = [
+        c
+        for task in tasks[:completed_task + 1]
+        for c in task
+    ]
+
     for task_idx in range(completed_task + 1):
-        classes = list(tasks[task_idx])
+        task_classes = list(tasks[task_idx])
         truth, pred = [], []
+
         for logits, labels in cached:
-            mask = np.isin(labels, classes)
+            mask = np.isin(labels, task_classes)
             if not np.any(mask):
                 continue
+
             task_logits = logits[mask].copy()
-            task_logits[:, [c for c in range(9) if c not in classes]] = -1e9
+
+            # Mask only future/unseen classes, not other seen tasks.
+            task_logits[:, [
+                c for c in range(9) if c not in seen_classes
+            ]] = -1e9
+
             truth.extend(labels[mask].tolist())
             pred.extend(task_logits.argmax(axis=1).tolist())
-        results[f"task{task_idx + 1}_accuracy"] = float(accuracy_score(truth, pred))
+
+        results[f"task{task_idx + 1}_accuracy"] = float(
+            accuracy_score(truth, pred)
+        )
+
     return results
 
 
@@ -219,12 +303,23 @@ def local_train(
     lr: float,
     replay_fraction: float,
     seed: int,
+    update_mode: str,
 ) -> nn.Module:
     """Train a client model on current-task data plus sampled replay examples."""
     set_seed(seed)
     local_model = SmallCNN().to(device)
     local_model.load_state_dict(global_model.state_dict())
-    optimizer = torch.optim.Adam(local_model.parameters(), lr=lr)
+    trainable_names = configure_trainable_parameters(
+        local_model, update_mode
+    )
+
+    trainable_parameters = [
+        parameter
+        for parameter in local_model.parameters()
+        if parameter.requires_grad
+    ]
+
+    optimizer = torch.optim.Adam(trainable_parameters, lr=lr)
     criterion = nn.CrossEntropyLoss()
 
     current_loader = DataLoader(
@@ -309,7 +404,25 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
     client_parts = make_client_partitions(labels, args.num_clients, args.seed, args.dirichlet_alpha)
     buffers: List[Dict[int, List[int]]] = [dict() for _ in range(args.num_clients)]
     global_model = SmallCNN().to(device)
-    model_bytes = state_dict_bytes(global_model)
+    # model_bytes = state_dict_bytes(global_model)
+    full_model_bytes = state_dict_bytes(global_model)
+
+    trainable_names = get_trainable_names(
+        global_model, args.update_mode
+    )
+
+    update_keys = get_update_state_keys(
+        global_model, args.update_mode
+    )
+
+    update_bytes = selected_state_bytes(
+        global_model, update_keys
+    )
+
+    trainable_params = selected_parameter_count(
+        global_model, trainable_names
+    )
+
     seen_classes: List[int] = []
     best_task_accuracy: Dict[int, float] = {}
     history_rows = []
@@ -341,6 +454,7 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
                     lr=args.lr,
                     replay_fraction=args.replay_fraction,
                     seed=args.seed + memory_per_class * 1000 + task_idx * 100 + round_idx * 10 + client_id,
+                    update_mode=args.update_mode,
                 )
                 local_models.append(local_model)
                 # FedAvg weighting by the number of current + retained examples.
@@ -348,14 +462,17 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
 
             total_weight = float(sum(client_weights))
             new_state = {}
-            # FedAvg combines complete client state dicts, weighted by each
-            # client's current-task and replay example counts.
-            for key in global_model.state_dict():
+
+            for key in update_keys:
                 new_state[key] = sum(
-                    local_models[c].state_dict()[key] * (client_weights[c] / total_weight)
+                    local_models[c].state_dict()[key] *
+                    (client_weights[c] / total_weight)
                     for c in range(args.num_clients)
                 )
-            global_model.load_state_dict(new_state)
+
+            # Only selected parameters are updated.
+            # Frozen parameters remain unchanged on the global model.
+            global_model.load_state_dict(new_state, strict=False)
 
             metrics = evaluate(global_model, test_loader, seen_classes, device)
             task_metrics = evaluate_each_task(global_model, test_loader, TASKS, task_idx, device)
@@ -383,10 +500,22 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
                 **task_metrics,
                 "mean_forgetting_old_tasks": float(np.mean(old_forgetting_values)) if old_forgetting_values else 0.0,
                 "mean_forgetting_all_tasks": float(np.mean(all_forgetting_values)),
-                "model_bytes_per_client_update": model_bytes,
-                "cumulative_downlink_bytes": total_rounds * args.num_clients * model_bytes,
-                "cumulative_uplink_bytes": total_rounds * args.num_clients * model_bytes,
-                "cumulative_total_communication_bytes": total_rounds * args.num_clients * model_bytes * 2,
+               "update_mode": args.update_mode,
+                "trainable_parameters": trainable_params,
+                "trainable_parameter_fraction": (
+                    trainable_params / sum(p.numel() for p in global_model.parameters())
+                ),
+                "full_model_bytes": full_model_bytes,
+                "model_bytes_per_client_update": update_bytes,
+                "cumulative_downlink_bytes": (
+                    total_rounds * args.num_clients * update_bytes
+                ),
+                "cumulative_uplink_bytes": (
+                    total_rounds * args.num_clients * update_bytes
+                ),
+                "cumulative_total_communication_bytes": (
+                    total_rounds * args.num_clients * update_bytes * 2
+                ),
                 "buffer_examples_total": sum(len(v) for b in buffers for v in b.values()),
                 "process_rss_mib": current_rss_mib(),
                 "peak_rss_mib": peak_rss_mib(),
@@ -446,7 +575,7 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
             (r["peak_rss_mib"] for r in history_rows if np.isfinite(r["peak_rss_mib"])),
             default=float("nan"),
         ),
-        "model_bytes_per_client_update": model_bytes,
+        "model_bytes_per_client_update": update_bytes,
         "cumulative_downlink_bytes": final["cumulative_downlink_bytes"],
         "cumulative_uplink_bytes": final["cumulative_uplink_bytes"],
         "cumulative_total_communication_bytes": final["cumulative_total_communication_bytes"],
@@ -464,6 +593,19 @@ def run_one_budget(args, memory_per_class: int, train_ds, test_loader, labels, d
         "buffer_image_storage_bytes_equivalent_uint8": sum(
             sum(len(v) for v in client_buffer.values()) for client_buffer in buffers
         ) * 28 * 28 * 3,
+        "update_mode": args.update_mode,
+        "trainable_parameters": trainable_params,
+        "trainable_parameter_fraction": (
+            trainable_params / sum(p.numel() for p in global_model.parameters())
+        ),
+        "full_model_bytes": full_model_bytes,
+        "one_time_initial_model_broadcast_bytes": (
+            args.num_clients * full_model_bytes
+        ),
+        "total_communication_including_initial_broadcast_bytes": (
+            final["cumulative_total_communication_bytes"]
+            + args.num_clients * full_model_bytes
+        ),
     }
 
     budget_dir = out_dir / f"memory_{memory_per_class}"
@@ -493,6 +635,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--memory-per-class", nargs="+", type=int, default=[10, 25, 50, 100],
                         help="Replay examples retained per class per client.")
+    parser.add_argument("--update-mode", choices=["full", "head", "block_head"],default="full",
+                        help="Parameters to update: full, head, or block_head.")                    
     parser.add_argument("--num-clients", type=int, default=3)
     parser.add_argument("--rounds-per-task", type=int, default=5)
     parser.add_argument("--local-epochs", type=int, default=1)
@@ -532,7 +676,11 @@ def main():
     test_loader = DataLoader(test_ds, batch_size=args.batch_size * 2, shuffle=False, num_workers=args.num_workers)
 
     print(f"Device: {device}; train={len(train_ds)}; test={len(test_ds)}; clients={args.num_clients}")
-    print(f"Tasks: {TASKS}; replay budgets: {args.memory_per_class}; Dirichlet alpha={args.dirichlet_alpha}")
+    print(
+        f"Tasks: {TASKS}; replay budgets: {args.memory_per_class}; "
+        f"Dirichlet alpha={args.dirichlet_alpha}; "
+        f"update mode={args.update_mode}"
+    )
     print("Note: each budget is an independent run with the same partition seed and model initialization seed.")
 
     summaries = []
