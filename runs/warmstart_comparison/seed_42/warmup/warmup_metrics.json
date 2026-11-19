@@ -1,0 +1,18 @@
+{
+  "seed": 42,
+  "memory_per_class_per_client": 10,
+  "task1_accuracy": 0.9267036450079239,
+  "task1_macro_f1": 0.8491903954652326,
+  "task1_balanced_accuracy": 0.8246998337676539,
+  "warmup_training_time_seconds": 32.66406168900721,
+  "warmup_rounds": 5,
+  "warmup_communication_bytes": 2900280,
+  "initial_model_broadcast_bytes": 290028,
+  "full_model_bytes": 96676,
+  "buffer_examples_per_client": [
+    30,
+    30,
+    30
+  ],
+  "buffer_examples_total": 90
+}
